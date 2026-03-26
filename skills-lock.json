@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "sequential-thinking": {
+      "source": "mrgoonie/claudekit-skills",
+      "sourceType": "github",
+      "computedHash": "2d772aca1eab9aa266fb1ab50455febb571fb2a409ad6be90302a345da40a880"
+    }
+  }
+}
