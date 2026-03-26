@@ -35,3 +35,5 @@ app = FastAPI(
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": __version__}
+
+
