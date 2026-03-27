@@ -50,11 +50,17 @@ Webhook/Redpanda → FastAPI Ingestion → Bytewax Stream Processing
 This project uses the **OpenSpec framework** for managing specifications as living documentation.
 Specs are written before code. Code follows specs. Specs stay current through the archive lifecycle.
 
+### Roadmap
+
+High-level implementation plan lives in `openspec/ROADMAP.md`.
+Each phase maps to OpenSpec change(s). Update status as changes progress through the lifecycle.
+
 ### Directory Structure
 
 ```
 hybrid-sentinel/
 ├── openspec/
+│   ├── ROADMAP.md                # High-level phase plan (manually maintained)
 │   ├── specs/                    # Living specifications (source of truth)
 │   │   ├── stream-processing/
 │   │   │   └── spec.md
@@ -167,8 +173,17 @@ THEN {error handling}
 |--------|---------|-------|
 | **context7** | Fetches latest library docs and code examples | Add `use context7` to any prompt |
 | **sequential-thinking** | Step-by-step reasoning for complex architecture decisions | Used automatically when deep reasoning is needed |
+| **semgrep** | Static security analysis (SAST) for Python/FastAPI | Auto-scans code for vulnerabilities; 290+ rules |
 
 Example: "How do I set up River anomaly detection? use context7"
+
+### Code Review Workflow
+
+After implementation (e.g., Sonnet completes `/opsx:apply`), review with:
+
+1. **Semgrep** — deterministic security scan: `semgrep scan --config auto src/`
+2. **`/code-review`** — multi-agent LLM review (install: `/plugin install code-review`)
+3. **Linters** — `ruff check src/ && mypy src/`
 
 ---
 
@@ -219,3 +234,6 @@ git commit -m "Archive {change-id}"
 | 2026-03-26 | `openspec/` directory convention | Official CLI structure from `openspec init` |
 | 2026-03-26 | Official CLI skills over community | Official skills use CLI for scaffolding/status; community forztf skills removed (EARS reference kept) |
 | 2026-03-26 | Sequential Thinking MCP + skill | Structured reasoning for complex architecture decisions |
+| 2026-03-26 | `openspec/ROADMAP.md` for phase planning | OpenSpec CLI has no native roadmap; manual markdown file tracks phases and maps to changes |
+| 2026-03-27 | Semgrep MCP for security scanning | Free SAST with FastAPI-aware rules; critical for payment gateway; deterministic (no LLM hallucinations) |
+| 2026-03-27 | `/code-review` plugin for LLM review | Multi-agent review catches logic bugs and convention drift; complements deterministic Semgrep |
