@@ -8,8 +8,8 @@ Update status as changes move through the lifecycle.
 | Phase | Change ID | Capability | Status |
 |-------|-----------|------------|--------|
 | 0 | `add-project-scaffold` | project-structure, api-ingestion | Archived |
-| 1 | `add-stream-processing` | stream-processing | Not Started |
-| 2 | `add-anomaly-detection` | anomaly-detection | Not Started |
+| 1 | `add-stream-processing` | stream-processing | Archived |
+| 2 | `add-anomaly-detection` | anomaly-detection | Archived |
 | 3 | `add-agent-investigation` | agent-investigation | Not Started |
 
 ## Phase Descriptions
@@ -18,7 +18,7 @@ Update status as changes move through the lifecycle.
 
 Foundation: Python package, FastAPI entry point, `/health` endpoint, config, Docker, dev tooling.
 
-### Phase 1 — Stream Processing
+### Phase 1 — Stream Processing (Complete)
 
 Deploy Bytewax stateful stream to collect data and match callbacks.
 
@@ -30,7 +30,7 @@ Deploy Bytewax stateful stream to collect data and match callbacks.
 
 **Depends on**: Phase 0
 
-### Phase 2 — Anomaly Detection
+### Phase 2 — Anomaly Detection (Complete)
 
 Implement River for statistical anomaly detection and tune thresholds.
 

@@ -1,139 +1,195 @@
-"""Integration tests for stream processing pipeline."""
+"""Integration tests for stream processing pipeline.
 
-import asyncio
-from datetime import datetime, timezone
+These tests start the full Bytewax dataflow + tick generator, push
+events through the event bus, and verify sink output.  They use short
+timeouts (2 s callback, 1 s tick) set by the ``stream_pipeline`` fixture.
+"""
+
+import time
+from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
-from hybrid_sentinel.main import app
+from hybrid_sentinel.event_bus import event_bus
+from hybrid_sentinel.models import CallbackEvent, TransactionEvent
 from hybrid_sentinel.stream.sink import anomaly_events, matched_pairs
 
 
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="E2E test - requires full dataflow running")
-async def test_transaction_callback_matching():
-    """Submit transaction and callback, verify matched pair is emitted."""
-    # Clear any previous test data
-    matched_pairs.clear()
-    anomaly_events.clear()
+@pytest.mark.integration
+def test_transaction_callback_matching(stream_pipeline: None) -> None:
+    """Submit transaction then callback — verify a MatchedPair is emitted."""
+    txn = TransactionEvent(
+        merchant_id="M_INT_1",
+        transaction_id="T_MATCH_1",
+        amount=Decimal("100.00"),
+        currency="USD",
+        provider_id="P1",
+        timestamp=datetime.now(UTC),
+    )
+    cb = CallbackEvent(
+        merchant_id="M_INT_1",
+        transaction_id="T_MATCH_1",
+        status="success",
+        actual_amount=Decimal("100.00"),
+        actual_currency="USD",
+        provider_id="P1",
+        timestamp=datetime.now(UTC),
+    )
 
-    now = datetime.now(timezone.utc)
-    merchant_id = "M_TEST_1"
-    transaction_id = "T_MATCH_1"
+    event_bus.enqueue(txn)
+    event_bus.enqueue(cb)
 
-    transaction_payload = {
-        "type": "transaction",
-        "merchant_id": merchant_id,
-        "transaction_id": transaction_id,
-        "amount": 100.0,
-        "currency": "USD",
-        "provider_id": "P1",
-        "timestamp": now.isoformat(),
-    }
-
-    callback_payload = {
-        "type": "callback",
-        "merchant_id": merchant_id,
-        "transaction_id": transaction_id,
-        "status": "success",
-        "provider_id": "P1",
-        "timestamp": now.isoformat(),
-    }
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        # Submit transaction
-        response1 = await client.post("/webhooks/transaction", json=transaction_payload)
-        assert response1.status_code == 202
-
-        # Submit callback
-        response2 = await client.post("/webhooks/transaction", json=callback_payload)
-        assert response2.status_code == 202
-
-        # Wait for dataflow processing (give it a moment)
-        await asyncio.sleep(2)
-
-    # Verify matched pair was emitted
-    assert len(matched_pairs) >= 1
-    found = False
-    for pair in matched_pairs:
-        if (
-            pair.transaction.merchant_id == merchant_id
-            and pair.transaction.transaction_id == transaction_id
+    # Wait for the dataflow to process both events
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if any(
+            p.transaction.transaction_id == "T_MATCH_1" for p in matched_pairs
         ):
-            assert pair.callback.status == "success"
-            found = True
             break
-    assert found, f"Matched pair not found for {merchant_id}:{transaction_id}"
+        time.sleep(0.2)
+
+    assert any(
+        p.transaction.merchant_id == "M_INT_1"
+        and p.transaction.transaction_id == "T_MATCH_1"
+        and p.callback.status == "success"
+        for p in matched_pairs
+    ), f"Expected matched pair not found. Pairs: {len(matched_pairs)}"
 
 
-@pytest.mark.asyncio
-@pytest.mark.skip(reason="E2E test - requires full dataflow running")
-async def test_timeout_anomaly_detection():
-    """Submit transaction without callback, verify TIMEOUT anomaly is emitted.
+@pytest.mark.integration
+def test_reconciliation_different_amounts(stream_pipeline: None) -> None:
+    """Submit transaction and callback with different amounts/currencies.
 
-    Note: This test uses a shortened timeout for faster execution.
-    It overrides settings.callback_timeout temporarily.
+    Verify MatchedPair contains both original and actual values.
     """
-    # Clear any previous test data
-    matched_pairs.clear()
-    anomaly_events.clear()
+    txn = TransactionEvent(
+        merchant_id="M_INT_3",
+        transaction_id="T_RECON_DIFF_1",
+        amount=Decimal("100.00"),
+        currency="USD",
+        provider_id="P1",
+        timestamp=datetime.now(UTC),
+    )
+    cb = CallbackEvent(
+        merchant_id="M_INT_3",
+        transaction_id="T_RECON_DIFF_1",
+        status="success",
+        actual_amount=Decimal("90.00"),  # Different amount
+        actual_currency="EUR",  # Different currency
+        provider_id="P1",
+        timestamp=datetime.now(UTC),
+    )
 
-    # Temporarily shorten timeout for testing (override in config)
-    from hybrid_sentinel.config import settings
+    event_bus.enqueue(txn)
+    event_bus.enqueue(cb)
 
-    original_timeout = settings.callback_timeout
-    original_tick = settings.tick_interval
-    settings.callback_timeout = 3  # 3 seconds for testing
-    settings.tick_interval = 2  # 2 seconds tick interval
+    # Wait for the dataflow to process both events
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if any(
+            p.transaction.transaction_id == "T_RECON_DIFF_1" for p in matched_pairs
+        ):
+            break
+        time.sleep(0.2)
 
-    try:
-        now = datetime.now(timezone.utc)
-        merchant_id = "M_TEST_2"
-        transaction_id = "T_TIMEOUT_1"
+    # Find the matched pair
+    pair = next(
+        (p for p in matched_pairs if p.transaction.transaction_id == "T_RECON_DIFF_1"),
+        None,
+    )
+    assert pair is not None, "Expected matched pair not found"
 
-        transaction_payload = {
-            "type": "transaction",
-            "merchant_id": merchant_id,
-            "transaction_id": transaction_id,
-            "amount": 200.0,
-            "currency": "USD",
-            "provider_id": "P2",
-            "timestamp": now.isoformat(),
-        }
+    # Verify transaction values
+    assert pair.transaction.amount == Decimal("100.00")
+    assert pair.transaction.currency == "USD"
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            # Submit transaction only (no callback)
-            response = await client.post("/webhooks/transaction", json=transaction_payload)
-            assert response.status_code == 202
+    # Verify callback actual values
+    assert pair.callback.actual_amount == Decimal("90.00")
+    assert pair.callback.actual_currency == "EUR"
 
-            # Wait longer than timeout + tick interval
-            await asyncio.sleep(6)
 
-        # Verify TIMEOUT anomaly was emitted
-        # Note: This might be flaky in CI due to timing
-        assert len(anomaly_events) >= 1
-        found = False
-        for anomaly in anomaly_events:
-            if (
-                anomaly.merchant_id == merchant_id
-                and anomaly.transaction_id == transaction_id
-                and anomaly.anomaly_type == "TIMEOUT"
-            ):
-                found = True
-                break
+@pytest.mark.integration
+def test_reconciliation_same_amounts(stream_pipeline: None) -> None:
+    """Submit transaction and callback with same amount/currency values.
 
-        # If not found, it might be a timing issue - log for debugging
-        if not found:
-            print(f"Warning: TIMEOUT anomaly not detected (timing issue?). Anomalies: {len(anomaly_events)}")
-        # For now, we'll assert to catch real issues, but this test might need adjustment
-        assert found, f"TIMEOUT anomaly not found for {merchant_id}:{transaction_id}"
+    Verify MatchedPair contains matching values.
+    """
+    txn = TransactionEvent(
+        merchant_id="M_INT_4",
+        transaction_id="T_RECON_SAME_1",
+        amount=Decimal("200.00"),
+        currency="GBP",
+        provider_id="P2",
+        timestamp=datetime.now(UTC),
+    )
+    cb = CallbackEvent(
+        merchant_id="M_INT_4",
+        transaction_id="T_RECON_SAME_1",
+        status="success",
+        actual_amount=Decimal("200.00"),  # Same amount
+        actual_currency="GBP",  # Same currency
+        provider_id="P2",
+        timestamp=datetime.now(UTC),
+    )
 
-    finally:
-        # Restore original settings
-        settings.callback_timeout = original_timeout
-        settings.tick_interval = original_tick
+    event_bus.enqueue(txn)
+    event_bus.enqueue(cb)
+
+    # Wait for the dataflow to process both events
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if any(
+            p.transaction.transaction_id == "T_RECON_SAME_1" for p in matched_pairs
+        ):
+            break
+        time.sleep(0.2)
+
+    # Find the matched pair
+    pair = next(
+        (p for p in matched_pairs if p.transaction.transaction_id == "T_RECON_SAME_1"),
+        None,
+    )
+    assert pair is not None, "Expected matched pair not found"
+
+    # Verify values match
+    assert pair.transaction.amount == Decimal("200.00")
+    assert pair.transaction.currency == "GBP"
+    assert pair.callback.actual_amount == Decimal("200.00")
+    assert pair.callback.actual_currency == "GBP"
+
+
+@pytest.mark.integration
+def test_timeout_anomaly_detection(stream_pipeline: None) -> None:
+    """Submit transaction without callback — verify TIMEOUT anomaly is emitted.
+
+    The ``stream_pipeline`` fixture sets callback_timeout=2 s and tick_interval=1 s,
+    so a TIMEOUT should appear within ~4 s.
+    """
+    txn = TransactionEvent(
+        merchant_id="M_INT_2",
+        transaction_id="T_TIMEOUT_1",
+        amount=Decimal("200.00"),
+        currency="USD",
+        provider_id="P2",
+        timestamp=datetime.now(UTC),
+    )
+
+    event_bus.enqueue(txn)
+
+    # Wait for timeout (2 s) + tick (1 s) + processing headroom
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if any(
+            a.transaction_id == "T_TIMEOUT_1" and a.anomaly_type == "TIMEOUT"
+            for a in anomaly_events
+        ):
+            break
+        time.sleep(0.2)
+
+    assert any(
+        a.merchant_id == "M_INT_2"
+        and a.transaction_id == "T_TIMEOUT_1"
+        and a.anomaly_type == "TIMEOUT"
+        for a in anomaly_events
+    ), f"Expected TIMEOUT anomaly not found. Anomalies: {len(anomaly_events)}"

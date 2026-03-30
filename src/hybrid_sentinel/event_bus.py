@@ -1,56 +1,71 @@
 """In-process event bus for connecting FastAPI to Bytewax dataflow."""
 
-import asyncio
-from typing import Any
+import queue
 
 from hybrid_sentinel.config import settings
 
 
 class EventBus:
-    """Asyncio Queue-based event bus with backpressure support."""
+    """Thread-safe queue-based event bus with backpressure support."""
 
-    def __init__(self, max_size: int | None = None):
-        """Initialize event bus with configurable queue size.
-
-        Args:
-            max_size: Maximum queue size. Defaults to settings.queue_max_size.
-        """
+    def __init__(self, max_size: int | None = None) -> None:
         self._max_size = max_size or settings.queue_max_size
-        self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=self._max_size)
+        self._queue: queue.Queue[object] = queue.Queue(maxsize=self._max_size)
         self._stopped = False
 
-    async def enqueue(self, event: Any) -> bool:
-        """Enqueue an event.
-
-        Args:
-            event: Event to enqueue.
+    def enqueue(self, event: object) -> bool:
+        """Enqueue an event (non-blocking).
 
         Returns:
-            True if enqueued successfully, False if queue is full.
+            True if enqueued successfully, False if queue is full or bus is stopped.
         """
         if self._stopped:
             return False
-
         try:
             self._queue.put_nowait(event)
             return True
-        except asyncio.QueueFull:
+        except queue.Full:
             return False
 
-    async def dequeue(self) -> Any | None:
-        """Dequeue an event (blocking).
+    def dequeue(self, timeout: float = 1.0) -> object | None:
+        """Dequeue an event with timeout.
 
         Returns:
-            Event or None if bus is stopped and queue is empty.
+            Event or None if timeout expires.
         """
         try:
-            return await asyncio.wait_for(self._queue.get(), timeout=1.0)
-        except TimeoutError:
+            return self._queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def dequeue_nowait(self) -> object | None:
+        """Dequeue an event without blocking.
+
+        Returns:
+            Event or None if queue is empty.
+        """
+        try:
+            return self._queue.get_nowait()
+        except queue.Empty:
             return None
 
     def stop(self) -> None:
         """Signal that the bus is stopping."""
         self._stopped = True
+
+    def reset(self) -> None:
+        """Reset the bus for reuse (e.g. between tests)."""
+        self._stopped = False
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+
+    @property
+    def stopped(self) -> bool:
+        """Whether the bus has been stopped."""
+        return self._stopped
 
     def is_full(self) -> bool:
         """Check if the queue is full."""

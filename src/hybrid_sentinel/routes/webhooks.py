@@ -29,7 +29,7 @@ async def ingest_transaction_event(
         HTTPException: 422 if validation fails, 503 if queue is full.
     """
     # Try to enqueue the event
-    success = await event_bus.enqueue(event)
+    success = event_bus.enqueue(event)
 
     if not success:
         logger.warning("Event queue is full, rejecting event: %s", event.type)

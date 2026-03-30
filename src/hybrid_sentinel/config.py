@@ -18,5 +18,14 @@ class Settings(BaseSettings):
     callback_timeout: int = 300  # seconds
     tick_interval: int = 30  # seconds
 
+    # Anomaly detection settings
+    anomaly_threshold: float = 0.85
+    model_warmup_events: int = 1000
+    drift_detection_enabled: bool = True
+    scoring_queue_max_size: int = 10000
+    hst_n_trees: int = 15
+    hst_height: int = 6
+    hst_window_size: int = 500
+
 
 settings = Settings()

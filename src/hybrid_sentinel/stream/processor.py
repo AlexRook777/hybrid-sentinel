@@ -1,6 +1,7 @@
 """Bytewax stateful processor for callback matching and timeout detection."""
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -18,6 +19,39 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class TickEvent:
+    """Tick event routed to a specific key for timeout checking."""
+
+    key: str
+
+
+# Thread-safe registry of keys with pending transactions.
+# The tick generator reads this to know which keys need timeout checks.
+_active_keys_lock = threading.Lock()
+_active_keys: set[str] = set()
+
+
+def register_active_key(key: str) -> None:
+    with _active_keys_lock:
+        _active_keys.add(key)
+
+
+def unregister_active_key(key: str) -> None:
+    with _active_keys_lock:
+        _active_keys.discard(key)
+
+
+def get_active_keys() -> set[str]:
+    with _active_keys_lock:
+        return _active_keys.copy()
+
+
+def clear_active_keys() -> None:
+    with _active_keys_lock:
+        _active_keys.clear()
+
+
+@dataclass
 class TransactionState:
     """State holding a pending transaction awaiting callback."""
 
@@ -29,34 +63,24 @@ class CallbackMatcherState:
     """State class for stateful callback matching."""
 
     def __init__(self) -> None:
-        """Initialize empty state."""
         self.pending_transactions: dict[str, TransactionState] = {}
 
     def process_event(
         self, event: IncomingEvent
     ) -> tuple["CallbackMatcherState", list[Any]]:
-        """Process an incoming event and return updated state and outputs.
-
-        Args:
-            event: TransactionEvent or CallbackEvent.
-
-        Returns:
-            Tuple of (updated_state, list_of_outputs).
-            Outputs can be MatchedPair or AnomalyEvent.
-        """
-        outputs = []
+        """Process an incoming event and return updated state and outputs."""
+        outputs: list[Any] = []
 
         if isinstance(event, TransactionEvent):
-            # Store transaction in state
             key = f"{event.merchant_id}:{event.transaction_id}"
             self.pending_transactions[key] = TransactionState(
                 transaction=event,
                 received_at=datetime.now(UTC),
             )
+            register_active_key(key)
             logger.debug("Stored transaction in state: %s", key)
 
         elif isinstance(event, CallbackEvent):
-            # Try to match with pending transaction
             key = f"{event.merchant_id}:{event.transaction_id}"
             if key in self.pending_transactions:
                 state = self.pending_transactions.pop(key)
@@ -66,6 +90,7 @@ class CallbackMatcherState:
                     match_timestamp=datetime.now(UTC),
                 )
                 outputs.append(matched)
+                unregister_active_key(key)
                 logger.debug("Matched callback to transaction: %s", key)
             else:
                 logger.warning("Orphaned callback (no matching transaction): %s", key)
@@ -73,15 +98,11 @@ class CallbackMatcherState:
         return self, outputs
 
     def check_timeouts(self) -> tuple["CallbackMatcherState", list[Any]]:
-        """Check for timed-out transactions and emit anomaly events.
-
-        Returns:
-            Tuple of (updated_state, list_of_anomaly_events).
-        """
+        """Check for timed-out transactions and emit anomaly events."""
         now = datetime.now(UTC)
         timeout_seconds = settings.callback_timeout
-        outputs = []
-        timed_out_keys = []
+        outputs: list[Any] = []
+        timed_out_keys: list[str] = []
 
         for key, state in self.pending_transactions.items():
             elapsed = (now - state.received_at).total_seconds()
@@ -98,9 +119,9 @@ class CallbackMatcherState:
                 timed_out_keys.append(key)
                 logger.info("TIMEOUT anomaly detected: %s (elapsed: %ds)", key, elapsed)
 
-        # Remove timed-out entries from state
         for key in timed_out_keys:
             del self.pending_transactions[key]
+            unregister_active_key(key)
 
         return self, outputs
 
@@ -112,23 +133,19 @@ def callback_matcher(
 
     Args:
         state: Current state (None on first event for this key).
-        event: Incoming event (TransactionEvent, CallbackEvent, or "TICK").
+        event: Incoming event (TransactionEvent, CallbackEvent, or TickEvent).
 
     Returns:
         Tuple of (updated_state, list_of_outputs).
     """
-    # Initialize state if None
     if state is None:
         state = CallbackMatcherState()
 
-    # Handle tick events for timeout checks
-    if isinstance(event, str) and event == "TICK":
+    if isinstance(event, TickEvent):
         return state.check_timeouts()
 
-    # Process normal events (must be IncomingEvent at this point)
     if isinstance(event, (TransactionEvent, CallbackEvent)):
         return state.process_event(event)
 
-    # Unknown event type - ignore
     logger.warning("Unknown event type: %s", type(event))
     return state, []

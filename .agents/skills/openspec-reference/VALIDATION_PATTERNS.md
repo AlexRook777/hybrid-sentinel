@@ -45,6 +45,17 @@ grep -c "## Impact" spec/changes/{change-id}/proposal.md
 
 **Expected**: Each grep returns 1 (or more if subsections exist)
 
+### Validate Design File
+
+```bash
+# Verify design.md has core sections
+grep -c "## Context" spec/changes/{change-id}/design.md
+grep -c "## Goals" spec/changes/{change-id}/design.md
+grep -c "## Decisions" spec/changes/{change-id}/design.md
+```
+
+**Expected**: Each grep returns 1 (or more if subsections exist)
+
 ### Validate Tasks File
 
 ```bash
@@ -134,6 +145,21 @@ grep -c "SHALL" spec/changes/{change-id}/specs/**/*.md
 
 **Expected**: At least as many SHALL as requirements
 
+## Functional Architecture Validation
+
+Validation of the architectural decisions, libraries, and frameworks proposed in `design.md` must be performed using the Context7 MCP. This ensures that the proposed solution relies on current, recommended approaches and avoids deprecated or obsolete patterns.
+
+### Validate with Context7 MCP
+
+1. Read `design.md` to identify the core libraries, APIs, and framework patterns being proposed.
+2. Resolve the appropriate Context7 library IDs using the MCP.
+3. Query the Context7 documentation for each core architectural decision to verify:
+   - Is the proposed function/class the current recommended approach?
+   - Are there any deprecations or better alternatives?
+   - Does the proposed pattern align with the library's official documentation?
+
+**Expected**: The design choices are verified as modern, valid, and supported by the latest documentation.
+
 ## Complete Validation Workflow
 
 ### Pre-Submit Validation Script
@@ -156,7 +182,7 @@ fi
 echo "✓ Change directory exists"
 
 # 2. Required files exist
-for file in proposal.md tasks.md; do
+for file in proposal.md design.md tasks.md; do
     if [ ! -f "$BASE_PATH/$file" ]; then
         echo "✗ Missing $file"
         exit 1
@@ -173,7 +199,16 @@ for section in "## Why" "## What Changes" "## Impact"; do
 done
 echo "✓ Proposal has required sections"
 
-# 4. Tasks file has numbered tasks
+# 4. Design has required sections
+for section in "## Context" "## Goals" "## Decisions"; do
+    if ! grep -q "$section" "$BASE_PATH/design.md"; then
+        echo "✗ design.md missing section: $section"
+        exit 1
+    fi
+done
+echo "✓ Design has required sections"
+
+# 5. Tasks file has numbered tasks
 TASK_COUNT=$(grep -c "^[0-9]\+\." "$BASE_PATH/tasks.md" || echo "0")
 if [ "$TASK_COUNT" -lt 3 ]; then
     echo "✗ tasks.md has insufficient tasks ($TASK_COUNT)"
@@ -181,7 +216,7 @@ if [ "$TASK_COUNT" -lt 3 ]; then
 fi
 echo "✓ Found $TASK_COUNT tasks"
 
-# 5. Spec deltas exist
+# 6. Spec deltas exist
 DELTA_COUNT=$(find "$BASE_PATH/specs" -name "*.md" 2>/dev/null | wc -l)
 if [ "$DELTA_COUNT" -eq 0 ]; then
     echo "✗ No spec delta files found"
@@ -189,7 +224,7 @@ if [ "$DELTA_COUNT" -eq 0 ]; then
 fi
 echo "✓ Found $DELTA_COUNT spec delta file(s)"
 
-# 6. Delta operations exist
+# 7. Delta operations exist
 OPERATIONS=$(grep -h "## ADDED\|MODIFIED\|REMOVED" "$BASE_PATH/specs"/**/*.md 2>/dev/null | wc -l)
 if [ "$OPERATIONS" -eq 0 ]; then
     echo "✗ No delta operations found"
@@ -197,7 +232,7 @@ if [ "$OPERATIONS" -eq 0 ]; then
 fi
 echo "✓ Found $OPERATIONS delta operation(s)"
 
-# 7. Requirements have scenarios
+# 8. Requirements have scenarios
 REQ_COUNT=$(grep -h "### Requirement:" "$BASE_PATH/specs"/**/*.md 2>/dev/null | wc -l)
 SCENARIO_COUNT=$(grep -h "#### Scenario:" "$BASE_PATH/specs"/**/*.md 2>/dev/null | wc -l)
 
@@ -268,6 +303,7 @@ done
 # Quick validation of change structure
 CHANGE_ID="add-user-auth" && \
 test -f spec/changes/$CHANGE_ID/proposal.md && \
+test -f spec/changes/$CHANGE_ID/design.md && \
 test -f spec/changes/$CHANGE_ID/tasks.md && \
 grep -q "## ADDED\|MODIFIED\|REMOVED" spec/changes/$CHANGE_ID/specs/**/*.md && \
 grep -q "### Requirement:" spec/changes/$CHANGE_ID/specs/**/*.md && \
@@ -297,12 +333,14 @@ Manual Checks:
 - [ ] proposal.md Why section explains the problem
 - [ ] proposal.md What section lists concrete changes
 - [ ] proposal.md Impact section identifies affected areas
+- [ ] design.md decisions are numbered and clearly justified
+- [ ] design.md architecture and library choices validated via Context7 MCP
 - [ ] tasks.md has 5-15 concrete, testable tasks
 - [ ] Tasks are ordered by dependencies
 
 Automated Checks:
 - [ ] Directory structure exists
-- [ ] Required files present (proposal.md, tasks.md, spec-delta.md)
+- [ ] Required files present (proposal.md, design.md, tasks.md, spec-delta.md)
 - [ ] Delta operations present (ADDED/MODIFIED/REMOVED)
 - [ ] Requirements follow format: `### Requirement: Name`
 - [ ] Scenarios follow format: `#### Scenario: Name`

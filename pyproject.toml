@@ -14,12 +14,10 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic-settings>=2.6.0",
     "bytewax>=0.21.0",
+    "river>=0.21.0",
 ]
 
 [project.optional-dependencies]
-ml = [
-    "river>=0.21.0",
-]
 agent = [
     "langgraph>=0.2.0",
 ]
@@ -41,6 +39,9 @@ packages = ["src/hybrid_sentinel"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: end-to-end tests requiring the full Bytewax pipeline (may be slow)",
+]
 
 [tool.ruff]
 target-version = "py312"
