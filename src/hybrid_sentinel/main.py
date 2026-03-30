@@ -9,10 +9,11 @@ from bytewax.testing import run_main
 from fastapi import FastAPI
 
 from hybrid_sentinel import __version__
+from hybrid_sentinel.agent import start_agent, stop_agent
 from hybrid_sentinel.anomaly import start_scorer, stop_scorer
 from hybrid_sentinel.config import settings
 from hybrid_sentinel.event_bus import event_bus
-from hybrid_sentinel.routes import anomalies, webhooks
+from hybrid_sentinel.routes import anomalies, cases, webhooks
 from hybrid_sentinel.stream.dataflow import build_dataflow, tick_generator
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     start_scorer()
     logger.info("Anomaly scorer started")
 
+    # Start the investigation agent
+    start_agent()
+    logger.info("Investigation agent started")
+
     yield
 
     # Shutdown: stop the tick generator
@@ -58,6 +63,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Stop the anomaly scorer
     stop_scorer()
+
+    # Stop the investigation agent
+    stop_agent()
 
     # Stop the event bus
     event_bus.stop()
@@ -78,6 +86,7 @@ app = FastAPI(
 # Register routers
 app.include_router(webhooks.router)
 app.include_router(anomalies.router)
+app.include_router(cases.router)
 
 
 @app.get("/health")

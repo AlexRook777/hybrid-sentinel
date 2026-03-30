@@ -27,5 +27,11 @@ class Settings(BaseSettings):
     hst_height: int = 6
     hst_window_size: int = 500
 
+    # Agent investigation settings
+    agent_enabled: bool = True
+    agent_llm_model: str = "mock"
+    agent_lookback_minutes: int = 10
+    investigation_queue_max_size: int = 1000
+
 
 settings = Settings()

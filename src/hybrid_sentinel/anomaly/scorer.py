@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from river import anomaly
 
+from hybrid_sentinel.agent import investigation_bus
 from hybrid_sentinel.anomaly.classify import classify_anomaly
 from hybrid_sentinel.anomaly.drift import DriftDetectorManager
 from hybrid_sentinel.anomaly.features import extract_features
@@ -139,6 +140,11 @@ class AnomalyScorer:
                 )
                 with self._lock:
                     self._scored_anomalies.append(drift_event)
+                if not investigation_bus.enqueue(drift_event):
+                    logger.warning(
+                        "Investigation bus full, dropped DRIFT event: %s",
+                        alert.merchant_id,
+                    )
                 logger.warning(
                     "Drift detected: %s - %s metric",
                     alert.merchant_id,
@@ -174,6 +180,12 @@ class AnomalyScorer:
 
             with self._lock:
                 self._scored_anomalies.append(scored_event)
+            if not investigation_bus.enqueue(scored_event):
+                logger.warning(
+                    "Investigation bus full, dropped event: %s:%s",
+                    scored_event.merchant_id,
+                    scored_event.transaction_id,
+                )
 
             logger.warning(
                 "Anomaly scored: type=%s score=%.3f merchant=%s txn=%s",
